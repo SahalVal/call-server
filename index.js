@@ -13,7 +13,7 @@ const {
   PHONE_NUMBER_FROM,
   DOMAIN: rawDomain,
   OPENAI_API_KEY,
-  API_KEY,
+  API_KEY, // facultatif pour sécuriser n8n
 } = process.env;
 
 const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
@@ -69,10 +69,8 @@ fastify.register(async function (fastify) {
     );
 
     let streamSid = null;
-    let conversationHistory = [];
-    let responseInProgress = false;
 
-    const sendSessionUpdate = () => {
+    const sendInitialSessionUpdate = () => {
       openAiWs.send(JSON.stringify({
         type: 'session.update',
         session: {
@@ -84,50 +82,36 @@ fastify.register(async function (fastify) {
           modalities: ['audio', 'text'],
         },
       }));
-    };
-
-    const sendUserMessage = (text) => {
-      conversationHistory.push({
-        type: 'message',
-        role: 'user',
-        content: [{ type: 'input_text', text }],
-      });
 
       openAiWs.send(JSON.stringify({
         type: 'conversation.item.create',
-        item: conversationHistory[conversationHistory.length - 1],
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: "Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.",
+          }],
+        },
       }));
 
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
-      responseInProgress = true;
     };
 
     openAiWs.on('open', () => {
       console.log('✅ OpenAI connected');
-      sendSessionUpdate();
-      sendUserMessage("Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.");
+      setTimeout(sendInitialSessionUpdate, 100);
     });
 
     openAiWs.on('message', (data) => {
       try {
         const msg = JSON.parse(data);
-
         if (msg.type === 'response.audio.delta' && msg.delta) {
           connection.send(JSON.stringify({
             event: 'media',
             streamSid,
             media: { payload: msg.delta },
           }));
-        } else if (msg.type === 'response.complete') {
-          responseInProgress = false;
-          // Ajouter la réponse de l'assistant dans l'historique pour le contexte
-          if (msg.item) {
-            conversationHistory.push({
-              type: 'message',
-              role: 'assistant',
-              content: msg.item.message.content,
-            });
-          }
         }
       } catch (err) {
         console.error('Error OpenAI -> Twilio:', err);
@@ -140,18 +124,10 @@ fastify.register(async function (fastify) {
         if (data.event === 'start') {
           streamSid = data.start.streamSid;
         } else if (data.event === 'media' && data.media?.payload) {
-          // Si l'utilisateur parle alors que l'IA répond, on interrompt la synthèse en cours
-          if (responseInProgress) {
-            openAiWs.send(JSON.stringify({ type: 'response.cancel' }));
-            responseInProgress = false;
-          }
           openAiWs.send(JSON.stringify({
             type: 'input_audio_buffer.append',
             audio: data.media.payload,
           }));
-        } else if (data.event === 'stop') {
-          // La parole utilisateur est terminée, on demande à OpenAI de traiter l'audio et générer la réponse
-          openAiWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
         }
       } catch (err) {
         console.error('Error Twilio -> OpenAI:', err);
@@ -164,9 +140,7 @@ fastify.register(async function (fastify) {
     });
 
     openAiWs.on('error', (e) => console.error('OpenAI WebSocket error:', e));
-    openAiWs.on('close', (code, reason) => {
-      console.log(`🔒 OpenAI WebSocket closed with code ${code}, reason: ${reason.toString()}`);
-    });
+    openAiWs.on('close', () => console.log('🔒 OpenAI WebSocket closed'));
   });
 });
 
