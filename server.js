@@ -1,52 +1,75 @@
 const WebSocket = require('ws');
 const express = require('express');
 const http = require('http');
+const axios = require('axios');
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-
-const OPENAI_WS_URL = 'wss://api.openai.com/v1/audio/chat/completions';
-
 const SYSTEM_PROMPT = "Tu es un assistant commercial très sympathique et professionnel. Pose des questions ouvertes.";
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-function createOpenAIConnection() {
-  return new Promise((resolve, reject) => {
-    const openaiWs = new WebSocket(OPENAI_WS_URL, {
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+async function createOpenAIRealtimeConnection() {
+  try {
+    const response = await axios.post(
+      'https://api.openai.com/v1/realtime/sessions',
+      {
+        model: "gpt-4o-realtime-preview",
+        modalities: ["audio"],
+        voice: "nova",
+        instructions: SYSTEM_PROMPT,
+        temperature: 0.8,
+        speed: 1.0,
       },
+      {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        }
+      }
+    );
+
+    const token = response.data.client_secret.value;
+    const openaiWs = new WebSocket('wss://api.openai.com/v1/realtime/ws');
+
+    return new Promise((resolve, reject) => {
+      openaiWs.on('open', () => {
+        openaiWs.send(JSON.stringify({
+          type: 'session.authenticate',
+          data: {
+            token: token
+          }
+        }));
+      });
+
+      openaiWs.on('message', (msg) => {
+        const parsed = JSON.parse(msg);
+        if (parsed.type === 'session.confirmation') {
+          console.log('Session Realtime OpenAI confirmée');
+          resolve(openaiWs);
+        } else if (parsed.type === 'session.error') {
+          console.error('Erreur session OpenAI:', parsed.data.message);
+          reject(new Error(parsed.data.message));
+        }
+      });
+
+      openaiWs.on('error', reject);
     });
 
-    openaiWs.on('open', () => {
-      openaiWs.send(JSON.stringify({
-        type: 'start',
-        data: {
-          model: 'gpt-4o',
-          system: SYSTEM_PROMPT,
-          voice: 'nova',
-          interim_results: true,
-        },
-      }));
-      resolve(openaiWs);
-    });
-
-    openaiWs.on('error', (err) => reject(err));
-  });
+  } catch (err) {
+    throw new Error('Erreur création session OpenAI Realtime: ' + err.message);
+  }
 }
 
 wss.on('connection', async (twilioWs) => {
   console.log('Twilio connecté');
-
   let openaiWs;
 
   try {
-    openaiWs = await createOpenAIConnection();
-    console.log('Connexion OpenAI établie');
+    openaiWs = await createOpenAIRealtimeConnection();
   } catch (err) {
-    console.error('Erreur connexion OpenAI:', err);
+    console.error(err);
     twilioWs.close();
     return;
   }
@@ -62,8 +85,8 @@ wss.on('connection', async (twilioWs) => {
           }));
         }
       }
-    } catch (e) {
-      console.error('Erreur traitement message OpenAI:', e);
+    } catch (err) {
+      console.error('Erreur traitement OpenAI:', err);
     }
   });
 
@@ -74,31 +97,27 @@ wss.on('connection', async (twilioWs) => {
         if (openaiWs.readyState === WebSocket.OPEN) {
           openaiWs.send(JSON.stringify({
             type: 'audio',
-            data: msg.media.payload,
+            data: msg.media.payload
           }));
         }
       } else if (msg.event === 'stop') {
-        console.log('Stream Twilio stopped');
+        console.log('Stream terminé');
         openaiWs.close();
         twilioWs.close();
       }
-    } catch (e) {
-      console.error('Erreur traitement message Twilio:', e);
+    } catch (err) {
+      console.error('Erreur traitement Twilio:', err);
     }
   });
 
   twilioWs.on('close', () => {
-    console.log('Connexion Twilio fermée');
-    if (openaiWs && openaiWs.readyState === WebSocket.OPEN) {
-      openaiWs.close();
-    }
+    console.log('Twilio fermé');
+    if (openaiWs.readyState === WebSocket.OPEN) openaiWs.close();
   });
 
   openaiWs.on('close', () => {
-    console.log('Connexion OpenAI fermée');
-    if (twilioWs.readyState === WebSocket.OPEN) {
-      twilioWs.close();
-    }
+    console.log('OpenAI fermé');
+    if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close();
   });
 });
 
