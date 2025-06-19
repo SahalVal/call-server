@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: twilio-openai-voice
+    runtime: node
+    repo: https://github.com/<ton-user>/<ton-repo>
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: PHONE_NUMBER_FROM
+        sync: false
+      - key: DOMAIN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
