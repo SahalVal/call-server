@@ -73,8 +73,11 @@ fastify.register(async function (fastify) {
     );
 
     let streamSid = null;
+    let isOpenAiReady = false;
 
     const sendInitialSessionUpdate = () => {
+      if (openAiWs.readyState !== WebSocket.OPEN) return;
+
       openAiWs.send(
         JSON.stringify({
           type: 'session.update',
@@ -110,13 +113,18 @@ fastify.register(async function (fastify) {
 
     openAiWs.on('open', () => {
       console.log('Connected to OpenAI realtime API');
-      setTimeout(sendInitialSessionUpdate, 100);
+      isOpenAiReady = true;
+      sendInitialSessionUpdate();
     });
 
     openAiWs.on('message', (data) => {
       try {
         const msg = JSON.parse(data);
-        if (msg.type === 'response.audio.delta' && msg.delta) {
+        if (
+          msg.type === 'response.audio.delta' &&
+          msg.delta &&
+          connection?.socket?.readyState === WebSocket.OPEN
+        ) {
           connection.socket.send(
             JSON.stringify({
               event: 'media',
@@ -131,20 +139,29 @@ fastify.register(async function (fastify) {
     });
 
     connection.socket.on('message', (msg) => {
-      const data = JSON.parse(msg);
-      if (data.event === 'start') {
-        streamSid = data.start.streamSid;
-      } else if (data.event === 'media' && openAiWs.readyState === WebSocket.OPEN) {
-        openAiWs.send(
-          JSON.stringify({
-            type: 'input_audio_buffer.append',
-            audio: data.media.payload,
-          })
-        );
+      try {
+        const data = JSON.parse(msg);
+        if (data.event === 'start') {
+          streamSid = data.start.streamSid;
+        } else if (
+          data.event === 'media' &&
+          isOpenAiReady &&
+          openAiWs.readyState === WebSocket.OPEN
+        ) {
+          openAiWs.send(
+            JSON.stringify({
+              type: 'input_audio_buffer.append',
+              audio: data.media.payload,
+            })
+          );
+        }
+      } catch (err) {
+        console.error('Failed to parse or handle message from Twilio:', err);
       }
     });
 
     connection.socket.on('close', () => {
+      console.log('Twilio stream closed');
       if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
     });
   });
