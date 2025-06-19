@@ -2,7 +2,7 @@ const WebSocket = require('ws');
 const express = require('express');
 const http = require('http');
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk_xxx';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const OPENAI_WS_URL = 'wss://api.openai.com/v1/audio/chat/completions';
 
