@@ -16,7 +16,7 @@ async function createOpenAIRealtimeConnection() {
       'https://api.openai.com/v1/realtime/sessions',
       {
         model: "gpt-4o-realtime-preview",
-        modalities: ["audio"],
+        modalities: ["audio","text"],
         voice: "nova",
         instructions: SYSTEM_PROMPT,
         temperature: 0.8,
