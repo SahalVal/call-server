@@ -130,7 +130,7 @@ fastify.get('/media-stream', { websocket: true }, (connection, req) => {
   });
 });
 
-fastify.listen({ port: PORT }, (err) => {
+fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
   if (err) {
     console.error(err);
     process.exit(1);
