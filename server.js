@@ -1,57 +1,49 @@
 const WebSocket = require('ws');
 const express = require('express');
 const http = require('http');
-const axios = require('axios');
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const SYSTEM_PROMPT = "Tu es un assistant commercial très sympathique et professionnel. Pose des questions ouvertes.";
+const MODEL = "gpt-4o-realtime-preview-2025-06-03";
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-async function createOpenAIRealtimeConnection() {
-  try {
-    // 1. Créer la session realtime chez OpenAI
-    const response = await axios.post(
-      'https://api.openai.com/v1/realtime/sessions',
-      {
-        model: "gpt-4o-realtime-preview",
-        modalities: ["audio", "text"],
-        instructions: SYSTEM_PROMPT,
-        voice: "nova"
+function createOpenAIConnection() {
+  return new Promise((resolve, reject) => {
+    const openaiWs = new WebSocket(`wss://api.openai.com/v1/realtime?model=${MODEL}`, {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "OpenAI-Beta": "realtime=v1",
       },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        }
-      }
-    );
-    const session = response.data;
-    console.log('Session OpenAI créée, id:', session.id);
-
-    // 2. Connexion websocket à OpenAI avec le token de session
-    return new Promise((resolve, reject) => {
-      const openaiWs = new WebSocket('wss://api.openai.com/v1/realtime', {
-        headers: {
-          Authorization: `Bearer ${session.client_secret.value}`,
-        }
-      });
-
-      openaiWs.on('open', () => {
-        console.log('WebSocket OpenAI ouvert');
-        resolve(openaiWs);
-      });
-
-      openaiWs.on('error', (err) => {
-        reject(err);
-      });
     });
-  } catch (err) {
-    throw new Error('Erreur création session OpenAI Realtime: ' + err.message);
-  }
+
+    openaiWs.on('open', () => {
+      // Démarre la session avec les options
+      openaiWs.send(JSON.stringify({
+        type: "start",
+        data: {
+          model: MODEL,
+          instructions: SYSTEM_PROMPT,
+          voice: "nova",
+          modalities: ["audio", "text"],
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 200,
+            create_response: true,
+            interrupt_response: true
+          }
+        }
+      }));
+      resolve(openaiWs);
+    });
+
+    openaiWs.on('error', (err) => reject(err));
+  });
 }
 
 wss.on('connection', async (twilioWs) => {
@@ -60,34 +52,27 @@ wss.on('connection', async (twilioWs) => {
   let openaiWs;
 
   try {
-    openaiWs = await createOpenAIRealtimeConnection();
+    openaiWs = await createOpenAIConnection();
+    console.log('Connexion OpenAI établie');
   } catch (err) {
-    console.error(err.message);
+    console.error('Erreur connexion OpenAI:', err);
     twilioWs.close();
     return;
   }
 
   openaiWs.on('message', (data) => {
-    // OpenAI envoie la réponse audio (base64) dans un message JSON
     try {
       const msg = JSON.parse(data);
-      if (msg.event === 'media' && msg.media?.payload) {
-        console.log('Message audio reçu de OpenAI, taille:', msg.media.payload.length);
-        // Renvoi vers Twilio
+      if (msg.type === 'audio' && msg.data) {
         if (twilioWs.readyState === WebSocket.OPEN) {
           twilioWs.send(JSON.stringify({
             event: 'media',
-            media: { payload: msg.media.payload }
+            media: { payload: msg.data },
           }));
-          console.log('Message audio envoyé à Twilio');
         }
       }
-      if (msg.event === 'stop') {
-        console.log('OpenAI a envoyé stop');
-        twilioWs.close();
-      }
     } catch (e) {
-      console.error('Erreur traitement message OpenAI:', e.message);
+      console.error('Erreur traitement message OpenAI:', e);
     }
   });
 
@@ -95,13 +80,11 @@ wss.on('connection', async (twilioWs) => {
     try {
       const msg = JSON.parse(data);
       if (msg.event === 'media' && msg.media?.payload) {
-        console.log('Message audio reçu de Twilio, taille:', msg.media.payload.length);
         if (openaiWs.readyState === WebSocket.OPEN) {
           openaiWs.send(JSON.stringify({
-            event: 'media',
-            media: { payload: msg.media.payload }
+            type: 'audio',
+            data: msg.media.payload,
           }));
-          console.log('Message audio envoyé à OpenAI');
         }
       } else if (msg.event === 'stop') {
         console.log('Stream Twilio stopped');
@@ -109,7 +92,7 @@ wss.on('connection', async (twilioWs) => {
         twilioWs.close();
       }
     } catch (e) {
-      console.error('Erreur traitement message Twilio:', e.message);
+      console.error('Erreur traitement message Twilio:', e);
     }
   });
 
