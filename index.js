@@ -16,7 +16,7 @@ const {
   API_KEY, // facultatif pour sécuriser n8n
 } = process.env;
 
-const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+$/, '');
+const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 6060;
 const SYSTEM_MESSAGE = 'You are a helpful AI assistant. Greet politely and assist the user.';
@@ -36,7 +36,7 @@ fastify.register(fastifyWs);
 fastify.post('/call', async (req, reply) => {
   const to = req.body?.to;
   const token = req.headers.authorization || req.body.api_key;
-  
+
   if (!to) return reply.status(400).send({ error: 'Missing "to"' });
   if (API_KEY && token !== `Bearer ${API_KEY}` && token !== API_KEY)
     return reply.status(401).send({ error: 'Unauthorized' });
@@ -100,14 +100,14 @@ fastify.register(async function (fastify) {
 
     openAiWs.on('open', () => {
       console.log('✅ OpenAI connected');
-      setTimeout(sendInitialSessionUpdate, 100); // laisse le temps à la session de se stabiliser
+      setTimeout(sendInitialSessionUpdate, 100);
     });
 
     openAiWs.on('message', (data) => {
       try {
         const msg = JSON.parse(data);
         if (msg.type === 'response.audio.delta' && msg.delta) {
-          connection.socket.send(JSON.stringify({
+          connection.send(JSON.stringify({
             event: 'media',
             streamSid,
             media: { payload: msg.delta },
@@ -118,7 +118,7 @@ fastify.register(async function (fastify) {
       }
     });
 
-    connection.socket.on('message', (msg) => {
+    connection.on('message', (msg) => {
       try {
         const data = JSON.parse(msg);
         if (data.event === 'start') {
@@ -134,7 +134,7 @@ fastify.register(async function (fastify) {
       }
     });
 
-    connection.socket.on('close', () => {
+    connection.on('close', () => {
       if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
       console.log('⛔️ Twilio stream closed');
     });
