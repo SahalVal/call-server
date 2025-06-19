@@ -1,3 +1,4 @@
+// index.js
 import Fastify from 'fastify';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
@@ -13,7 +14,7 @@ const {
   PHONE_NUMBER_FROM,
   DOMAIN: rawDomain,
   OPENAI_API_KEY,
-  API_KEY, // facultatif pour sécuriser n8n
+  API_KEY,
 } = process.env;
 
 const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
@@ -69,6 +70,9 @@ fastify.register(async function (fastify) {
     );
 
     let streamSid = null;
+    let openAiReady = false;
+    let userInterrupt = false;
+    const audioBuffer = [];
 
     const sendInitialSessionUpdate = () => {
       openAiWs.send(JSON.stringify({
@@ -99,19 +103,29 @@ fastify.register(async function (fastify) {
     };
 
     openAiWs.on('open', () => {
+      openAiReady = true;
       console.log('✅ OpenAI connected');
-      setTimeout(sendInitialSessionUpdate, 100);
+      sendInitialSessionUpdate();
+
+      while (audioBuffer.length > 0) {
+        openAiWs.send(audioBuffer.shift());
+      }
     });
 
     openAiWs.on('message', (data) => {
       try {
         const msg = JSON.parse(data);
+
         if (msg.type === 'response.audio.delta' && msg.delta) {
-          connection.send(JSON.stringify({
-            event: 'media',
-            streamSid,
-            media: { payload: msg.delta },
-          }));
+          if (!userInterrupt) {
+            connection.send(JSON.stringify({
+              event: 'media',
+              streamSid,
+              media: { payload: msg.delta },
+            }));
+          }
+        } else if (msg.type === 'response.stop') {
+          userInterrupt = false;
         }
       } catch (err) {
         console.error('Error OpenAI -> Twilio:', err);
@@ -121,13 +135,21 @@ fastify.register(async function (fastify) {
     connection.on('message', (msg) => {
       try {
         const data = JSON.parse(msg);
+
         if (data.event === 'start') {
           streamSid = data.start.streamSid;
         } else if (data.event === 'media' && data.media?.payload) {
-          openAiWs.send(JSON.stringify({
+          userInterrupt = true;
+          const payload = JSON.stringify({
             type: 'input_audio_buffer.append',
             audio: data.media.payload,
-          }));
+          });
+
+          if (openAiReady) {
+            openAiWs.send(payload);
+          } else {
+            audioBuffer.push(payload);
+          }
         }
       } catch (err) {
         console.error('Error Twilio -> OpenAI:', err);
