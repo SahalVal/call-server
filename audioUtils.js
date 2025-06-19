@@ -1,36 +1,40 @@
-// audioUtils.js
-import SoxCommand from 'sox-audio';
+import sox from 'sox-stream';
+import { PassThrough } from 'stream';
 
 /**
- * Convertit un buffer mulaw 8kHz (Twilio) en PCM16 8kHz
+ * Convertit un buffer mulaw 8kHz (Twilio) en PCM16 8kHz (Promise)
  */
 export function mulawToPcm16(mulawBuffer) {
   return new Promise((resolve, reject) => {
-    let chunks = [];
-    const cmd = SoxCommand();
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const chunks = [];
 
-    cmd.inputStream()
-      .inputFormat('mulaw')
-      .inputEncoding('mu-law')
-      .inputSampleRate(8000)
-      .inputChannels(1)
+    input.end(mulawBuffer);
 
-      .outputStream()
-      .outputFormat('raw') // PCM16 LE
-      .outputEncoding('signed-integer')
-      .outputBits(16)
-      .outputSampleRate(8000)
-      .outputChannels(1)
+    input
+      .pipe(sox({
+        input: {
+          type: 'raw',
+          encoding: 'mulaw',
+          bits: 8,
+          rate: 8000,
+          channels: 1,
+        },
+        output: {
+          type: 'raw',
+          encoding: 'signed-integer',
+          bits: 16,
+          rate: 8000,
+          channels: 1,
+          endian: 'little',
+        }
+      }))
+      .pipe(output);
 
-      .on('error', reject)
-      .on('end', () => resolve(Buffer.concat(chunks)))
-      .start();
-
-    cmd.inputStream().end(mulawBuffer);
-
-    cmd.outputStream().on('data', (chunk) => {
-      chunks.push(chunk);
-    });
+    output.on('data', (chunk) => chunks.push(chunk));
+    output.on('end', () => resolve(Buffer.concat(chunks)));
+    output.on('error', reject);
   });
 }
 
@@ -39,32 +43,36 @@ export function mulawToPcm16(mulawBuffer) {
  */
 export function resample8kTo24k(pcm16Buffer) {
   return new Promise((resolve, reject) => {
-    let chunks = [];
-    const cmd = SoxCommand();
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const chunks = [];
 
-    cmd.inputStream()
-      .inputFormat('raw')
-      .inputEncoding('signed-integer')
-      .inputBits(16)
-      .inputSampleRate(8000)
-      .inputChannels(1)
+    input.end(pcm16Buffer);
 
-      .outputStream()
-      .outputFormat('raw')
-      .outputEncoding('signed-integer')
-      .outputBits(16)
-      .outputSampleRate(24000)
-      .outputChannels(1)
+    input
+      .pipe(sox({
+        input: {
+          type: 'raw',
+          encoding: 'signed-integer',
+          bits: 16,
+          rate: 8000,
+          channels: 1,
+          endian: 'little',
+        },
+        output: {
+          type: 'raw',
+          encoding: 'signed-integer',
+          bits: 16,
+          rate: 24000,
+          channels: 1,
+          endian: 'little',
+        }
+      }))
+      .pipe(output);
 
-      .on('error', reject)
-      .on('end', () => resolve(Buffer.concat(chunks)))
-      .start();
-
-    cmd.inputStream().end(pcm16Buffer);
-
-    cmd.outputStream().on('data', (chunk) => {
-      chunks.push(chunk);
-    });
+    output.on('data', (chunk) => chunks.push(chunk));
+    output.on('end', () => resolve(Buffer.concat(chunks)));
+    output.on('error', reject);
   });
 }
 
@@ -73,32 +81,36 @@ export function resample8kTo24k(pcm16Buffer) {
  */
 export function resample24kTo8k(pcm16Buffer) {
   return new Promise((resolve, reject) => {
-    let chunks = [];
-    const cmd = SoxCommand();
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const chunks = [];
 
-    cmd.inputStream()
-      .inputFormat('raw')
-      .inputEncoding('signed-integer')
-      .inputBits(16)
-      .inputSampleRate(24000)
-      .inputChannels(1)
+    input.end(pcm16Buffer);
 
-      .outputStream()
-      .outputFormat('raw')
-      .outputEncoding('signed-integer')
-      .outputBits(16)
-      .outputSampleRate(8000)
-      .outputChannels(1)
+    input
+      .pipe(sox({
+        input: {
+          type: 'raw',
+          encoding: 'signed-integer',
+          bits: 16,
+          rate: 24000,
+          channels: 1,
+          endian: 'little',
+        },
+        output: {
+          type: 'raw',
+          encoding: 'signed-integer',
+          bits: 16,
+          rate: 8000,
+          channels: 1,
+          endian: 'little',
+        }
+      }))
+      .pipe(output);
 
-      .on('error', reject)
-      .on('end', () => resolve(Buffer.concat(chunks)))
-      .start();
-
-    cmd.inputStream().end(pcm16Buffer);
-
-    cmd.outputStream().on('data', (chunk) => {
-      chunks.push(chunk);
-    });
+    output.on('data', (chunk) => chunks.push(chunk));
+    output.on('end', () => resolve(Buffer.concat(chunks)));
+    output.on('error', reject);
   });
 }
 
@@ -107,31 +119,35 @@ export function resample24kTo8k(pcm16Buffer) {
  */
 export function pcm16ToMulaw(pcm16Buffer) {
   return new Promise((resolve, reject) => {
-    let chunks = [];
-    const cmd = SoxCommand();
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const chunks = [];
 
-    cmd.inputStream()
-      .inputFormat('raw')
-      .inputEncoding('signed-integer')
-      .inputBits(16)
-      .inputSampleRate(8000)
-      .inputChannels(1)
+    input.end(pcm16Buffer);
 
-      .outputStream()
-      .outputFormat('mulaw')
-      .outputEncoding('mu-law')
-      .outputSampleRate(8000)
-      .outputChannels(1)
+    input
+      .pipe(sox({
+        input: {
+          type: 'raw',
+          encoding: 'signed-integer',
+          bits: 16,
+          rate: 8000,
+          channels: 1,
+          endian: 'little',
+        },
+        output: {
+          type: 'raw',
+          encoding: 'mulaw',
+          bits: 8,
+          rate: 8000,
+          channels: 1,
+        }
+      }))
+      .pipe(output);
 
-      .on('error', reject)
-      .on('end', () => resolve(Buffer.concat(chunks)))
-      .start();
-
-    cmd.inputStream().end(pcm16Buffer);
-
-    cmd.outputStream().on('data', (chunk) => {
-      chunks.push(chunk);
-    });
+    output.on('data', (chunk) => chunks.push(chunk));
+    output.on('end', () => resolve(Buffer.concat(chunks)));
+    output.on('error', reject);
   });
 }
 
