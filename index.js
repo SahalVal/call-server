@@ -1,4 +1,3 @@
-// index.js
 import Fastify from 'fastify';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
@@ -18,9 +17,9 @@ const {
 } = process.env;
 
 const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
-const VOICE = 'fable';
+const VOICE = 'alloy';
 const PORT = process.env.PORT || 6060;
-const SYSTEM_MESSAGE = 'Tu es un assistant vocal professionnel. Tu appelles un professionnel pour lui présenter le label Expert PRO, lancé par Le Guichet Pro : le guichet unique des entreprises, déjà utilisé par plus de 100 000 professionnels en France. Le Guichet Pro aide les entreprises à se développer via la génération de leads, l’accompagnement, et des services comme la conciergerie ou les achats pros. Le label Expert PRO référence uniquement des professionnels, et les met en avant auprès d’autres professionnels de leur secteur local. Il permet d’être reconnu comme l’expert référent dans sa zone, d’attirer plus de clients professionnels qualifiés et de gagner en crédibilité. L’objectif de ton appel est d’ouvrir la discussion, puis de proposer d’envoyer un message par WhatsApp ou email pour que le prospect puisse vérifier immédiatement et très rapidement son éligibilité. Sois synthétique, pro et à l’écoute. Tu ne vends rien, tu proposes un premier pas.';
+const SYSTEM_MESSAGE = 'Tu es un assistant vocal professionnel. Tu appelles un professionnel pour lui présenter le label Expert PRO, lancé par Le Guichet Pro : le guichet unique des entreprises, déjà utilisé par plus de 100 000 professionnels en France. Le Guichet Pro aide les entreprises à se développer via la génération de leads, l’accompagnement, et des services comme la conciergerie ou les achats pros. Le label Expert PRO référence uniquement des professionnels, et les met en avant auprès d’autres professionnels de leur secteur. Il permet d’être reconnu comme l’expert référent dans sa zone, d’attirer plus de clients qualifiés et de gagner en crédibilité. L’objectif de ton appel est d’ouvrir la discussion, puis de proposer d’envoyer un lien par WhatsApp ou email pour que le prospect puisse vérifier immédiatement son éligibilité. Sois synthétique, pro et à l’écoute. Tu ne vends rien, tu proposes un premier pas.';
 
 const outboundTwiML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -70,11 +69,10 @@ fastify.register(async function (fastify) {
     );
 
     let streamSid = null;
-    let openAiReady = false;
-    let userInterrupt = false;
-    const audioBuffer = [];
+    let conversationHistory = [];
+    let responseInProgress = false;
 
-    const sendInitialSessionUpdate = () => {
+    const sendSessionUpdate = () => {
       openAiWs.send(JSON.stringify({
         type: 'session.update',
         session: {
@@ -86,30 +84,28 @@ fastify.register(async function (fastify) {
           modalities: ['audio', 'text'],
         },
       }));
+    };
+
+    const sendUserMessage = (text) => {
+      conversationHistory.push({
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text }],
+      });
 
       openAiWs.send(JSON.stringify({
         type: 'conversation.item.create',
-        item: {
-          type: 'message',
-          role: 'user',
-          content: [{
-            type: 'input_text',
-            text: "Hello there! I'm your AI assistant from Twilio & OpenAI. How can I help?",
-          }],
-        },
+        item: conversationHistory[conversationHistory.length - 1],
       }));
 
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
+      responseInProgress = true;
     };
 
     openAiWs.on('open', () => {
-      openAiReady = true;
       console.log('✅ OpenAI connected');
-      sendInitialSessionUpdate();
-
-      while (audioBuffer.length > 0) {
-        openAiWs.send(audioBuffer.shift());
-      }
+      sendSessionUpdate();
+      sendUserMessage("Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.");
     });
 
     openAiWs.on('message', (data) => {
@@ -117,15 +113,21 @@ fastify.register(async function (fastify) {
         const msg = JSON.parse(data);
 
         if (msg.type === 'response.audio.delta' && msg.delta) {
-          if (!userInterrupt) {
-            connection.send(JSON.stringify({
-              event: 'media',
-              streamSid,
-              media: { payload: msg.delta },
-            }));
+          connection.send(JSON.stringify({
+            event: 'media',
+            streamSid,
+            media: { payload: msg.delta },
+          }));
+        } else if (msg.type === 'response.complete') {
+          responseInProgress = false;
+          // Ajouter la réponse de l'assistant dans l'historique pour le contexte
+          if (msg.item) {
+            conversationHistory.push({
+              type: 'message',
+              role: 'assistant',
+              content: msg.item.message.content,
+            });
           }
-        } else if (msg.type === 'response.stop') {
-          userInterrupt = false;
         }
       } catch (err) {
         console.error('Error OpenAI -> Twilio:', err);
@@ -135,21 +137,21 @@ fastify.register(async function (fastify) {
     connection.on('message', (msg) => {
       try {
         const data = JSON.parse(msg);
-
         if (data.event === 'start') {
           streamSid = data.start.streamSid;
         } else if (data.event === 'media' && data.media?.payload) {
-          userInterrupt = true;
-          const payload = JSON.stringify({
+          // Si l'utilisateur parle alors que l'IA répond, on interrompt la synthèse en cours
+          if (responseInProgress) {
+            openAiWs.send(JSON.stringify({ type: 'response.cancel' }));
+            responseInProgress = false;
+          }
+          openAiWs.send(JSON.stringify({
             type: 'input_audio_buffer.append',
             audio: data.media.payload,
-          });
-
-          if (openAiReady) {
-            openAiWs.send(payload);
-          } else {
-            audioBuffer.push(payload);
-          }
+          }));
+        } else if (data.event === 'stop') {
+          // La parole utilisateur est terminée, on demande à OpenAI de traiter l'audio et générer la réponse
+          openAiWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
         }
       } catch (err) {
         console.error('Error Twilio -> OpenAI:', err);
@@ -162,7 +164,9 @@ fastify.register(async function (fastify) {
     });
 
     openAiWs.on('error', (e) => console.error('OpenAI WebSocket error:', e));
-    openAiWs.on('close', () => console.log('🔒 OpenAI WebSocket closed'));
+    openAiWs.on('close', (code, reason) => {
+      console.log(`🔒 OpenAI WebSocket closed with code ${code}, reason: ${reason.toString()}`);
+    });
   });
 });
 
