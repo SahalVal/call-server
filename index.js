@@ -11,18 +11,15 @@ const {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
   PHONE_NUMBER_FROM,
-  DOMAIN,
+  DOMAIN: rawDomain,
   OPENAI_API_KEY,
+  API_KEY, // facultatif pour sécuriser n8n
 } = process.env;
 
-const SYSTEM_MESSAGE = 'You are a helpful and friendly AI assistant. Greet politely and guide the user.';
+const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+$/, '');
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 6060;
-
-if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !PHONE_NUMBER_FROM || !DOMAIN || !OPENAI_API_KEY) {
-  console.error('Missing .env values. Please fill them in.');
-  process.exit(1);
-}
+const SYSTEM_MESSAGE = 'You are a helpful AI assistant. Greet politely and assist the user.';
 
 const outboundTwiML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -36,13 +33,13 @@ const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Healthcheck
-fastify.get('/', async () => ({ status: 'ok' }));
-
-// Webhook to trigger call from n8n
 fastify.post('/call', async (req, reply) => {
   const to = req.body?.to;
-  if (!to) return reply.status(400).send({ error: 'Missing "to" parameter.' });
+  const token = req.headers.authorization || req.body.api_key;
+  
+  if (!to) return reply.status(400).send({ error: 'Missing "to"' });
+  if (API_KEY && token !== `Bearer ${API_KEY}` && token !== API_KEY)
+    return reply.status(401).send({ error: 'Unauthorized' });
 
   try {
     const call = await client.calls.create({
@@ -57,10 +54,9 @@ fastify.post('/call', async (req, reply) => {
   }
 });
 
-// Media stream WebSocket (Twilio <-> OpenAI)
 fastify.register(async function (fastify) {
   fastify.get('/media-stream', { websocket: true }, (connection) => {
-    console.log('Twilio stream connected');
+    console.log('✅ Twilio stream connected');
 
     const openAiWs = new WebSocket(
       'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
@@ -73,68 +69,52 @@ fastify.register(async function (fastify) {
     );
 
     let streamSid = null;
-    let isOpenAiReady = false;
 
     const sendInitialSessionUpdate = () => {
-      if (openAiWs.readyState !== WebSocket.OPEN) return;
+      openAiWs.send(JSON.stringify({
+        type: 'session.update',
+        session: {
+          turn_detection: { type: 'server_vad' },
+          input_audio_format: 'g711_ulaw',
+          output_audio_format: 'g711_ulaw',
+          voice: VOICE,
+          instructions: SYSTEM_MESSAGE,
+          modalities: ['audio', 'text'],
+        },
+      }));
 
-      openAiWs.send(
-        JSON.stringify({
-          type: 'session.update',
-          session: {
-            turn_detection: { type: 'server_vad' },
-            input_audio_format: 'g711_ulaw',
-            output_audio_format: 'g711_ulaw',
-            voice: VOICE,
-            instructions: SYSTEM_MESSAGE,
-            modalities: ['text', 'audio'],
-          },
-        })
-      );
-
-      openAiWs.send(
-        JSON.stringify({
-          type: 'conversation.item.create',
-          item: {
-            type: 'message',
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: "Hello there! I'm your AI assistant from Twilio & OpenAI. How can I help?",
-              },
-            ],
-          },
-        })
-      );
+      openAiWs.send(JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: "Hello there! I'm your AI assistant from Twilio & OpenAI. How can I help?",
+          }],
+        },
+      }));
 
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
     };
 
     openAiWs.on('open', () => {
-      console.log('Connected to OpenAI realtime API');
-      isOpenAiReady = true;
-      sendInitialSessionUpdate();
+      console.log('✅ OpenAI connected');
+      setTimeout(sendInitialSessionUpdate, 100); // laisse le temps à la session de se stabiliser
     });
 
     openAiWs.on('message', (data) => {
       try {
         const msg = JSON.parse(data);
-        if (
-          msg.type === 'response.audio.delta' &&
-          msg.delta &&
-          connection?.socket?.readyState === WebSocket.OPEN
-        ) {
-          connection.socket.send(
-            JSON.stringify({
-              event: 'media',
-              streamSid,
-              media: { payload: Buffer.from(msg.delta, 'base64').toString('base64') },
-            })
-          );
+        if (msg.type === 'response.audio.delta' && msg.delta) {
+          connection.socket.send(JSON.stringify({
+            event: 'media',
+            streamSid,
+            media: { payload: msg.delta },
+          }));
         }
-      } catch (e) {
-        console.error('Error handling OpenAI msg:', e);
+      } catch (err) {
+        console.error('Error OpenAI -> Twilio:', err);
       }
     });
 
@@ -143,34 +123,31 @@ fastify.register(async function (fastify) {
         const data = JSON.parse(msg);
         if (data.event === 'start') {
           streamSid = data.start.streamSid;
-        } else if (
-          data.event === 'media' &&
-          isOpenAiReady &&
-          openAiWs.readyState === WebSocket.OPEN
-        ) {
-          openAiWs.send(
-            JSON.stringify({
-              type: 'input_audio_buffer.append',
-              audio: data.media.payload,
-            })
-          );
+        } else if (data.event === 'media' && data.media?.payload) {
+          openAiWs.send(JSON.stringify({
+            type: 'input_audio_buffer.append',
+            audio: data.media.payload,
+          }));
         }
       } catch (err) {
-        console.error('Failed to parse or handle message from Twilio:', err);
+        console.error('Error Twilio -> OpenAI:', err);
       }
     });
 
     connection.socket.on('close', () => {
-      console.log('Twilio stream closed');
       if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+      console.log('⛔️ Twilio stream closed');
     });
+
+    openAiWs.on('error', (e) => console.error('OpenAI WebSocket error:', e));
+    openAiWs.on('close', () => console.log('🔒 OpenAI WebSocket closed'));
   });
 });
 
 fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
   if (err) {
-    console.error('Error starting server:', err);
+    console.error('❌ Server error:', err);
     process.exit(1);
   }
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
