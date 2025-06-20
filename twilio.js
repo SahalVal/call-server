@@ -1,5 +1,6 @@
 import twilio from 'twilio';
 import fetch from 'node-fetch';
+import { VoiceResponse } from 'twilio';
 
 const {
   TWILIO_ACCOUNT_SID,
@@ -10,7 +11,7 @@ const {
 } = process.env;
 
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-const DOMAIN_CLEAN = DOMAIN.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$|\/$/, '');
+const DOMAIN_CLEAN = DOMAIN.replace(/(^\w+:|^)\/\//, '').replace(/\/+$|\/$/, '');
 
 export const INTRO_TEXT = `Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.`;
 
@@ -39,19 +40,23 @@ export async function handleCall(req, reply) {
     const call = await client.calls.create({
       from: PHONE_NUMBER_FROM,
       to,
-      record: 'record-from-answer-dual',
+      url: `https://${DOMAIN_CLEAN}/twiml`,
+      record: true,
       recordingStatusCallback: 'https://bridge.youzend.com/webhook/recording',
-      twiml: `<Response>
-        <Connect>
-          <Stream url="wss://${DOMAIN_CLEAN}/media-stream" />
-        </Connect>
-      </Response>`
     });
     return { message: 'Call initiated', sid: call.sid };
   } catch (err) {
     console.error('📞❌ Call error:', err);
     return reply.status(500).send({ error: 'Call failed', details: err.message });
   }
+}
+
+export async function serveTwiML(req, reply) {
+  const twiml = new VoiceResponse();
+  twiml.connect().stream({ url: `wss://${DOMAIN_CLEAN}/media-stream` });
+
+  reply.type('text/xml');
+  reply.send(twiml.toString());
 }
 
 export async function handleRecordingWebhook(req, reply) {
