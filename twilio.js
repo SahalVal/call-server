@@ -1,16 +1,19 @@
-import twilio from 'twilio';
+// ✅ Correction du bug ESM vs CommonJS pour Twilio
+import twilioPkg from 'twilio';
 import fetch from 'node-fetch';
-import { VoiceResponse } from 'twilio';
+
+const { VoiceResponse } = twilioPkg;
+const client = twilioPkg(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 
 const {
-  TWILIO_ACCOUNT_SID,
-  TWILIO_AUTH_TOKEN,
   PHONE_NUMBER_FROM,
   DOMAIN,
   API_KEY,
 } = process.env;
 
-const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const DOMAIN_CLEAN = DOMAIN.replace(/(^\w+:|^)\/\//, '').replace(/\/+$|\/$/, '');
 
 export const INTRO_TEXT = `Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.`;
@@ -53,6 +56,7 @@ export async function handleCall(req, reply) {
 
 export async function serveTwiML(req, reply) {
   const twiml = new VoiceResponse();
+  twiml.start().record({ recordingStatusCallback: 'https://bridge.youzend.com/webhook/recording' });
   twiml.connect().stream({ url: `wss://${DOMAIN_CLEAN}/media-stream` });
 
   reply.type('text/xml');
