@@ -95,6 +95,11 @@ fastify.register(async function (fastify) {
           voice: VOICE,
           instructions: SYSTEM_MESSAGE,
           modalities: ['audio', 'text'],
+          interim_results: true,
+          interruptibility: {
+            assistant: true,
+            user: true,
+          },
         },
       }));
 
