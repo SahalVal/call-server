@@ -10,7 +10,7 @@ const {
 } = process.env;
 
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-const DOMAIN_CLEAN = DOMAIN.replace(/(^\w+:|^)\/\//, '').replace(/\/+$|\/$/, '');
+const DOMAIN_CLEAN = DOMAIN.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$|\/$/, '');
 
 export const INTRO_TEXT = `Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.`;
 
@@ -27,16 +27,6 @@ Lis exactement : "${INTRO_TEXT}"
 Adopte un ton naturel, chaleureux, enthousiaste, positif et professionnel. Parle rapidement mais articule, marque des pauses naturelles, ta voix doit être fluide et naturelle, pas robotique du tout. Après la phrase d’intro, attends la réponse de ton interlocuteur avant de poursuivre.
 `.trim();
 
-export const outboundTwiML = (recordingCallbackUrl) => `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Start>
-    <Record recordingStatusCallback="${recordingCallbackUrl}" />
-  </Start>
-  <Connect>
-    <Stream url="wss://${DOMAIN_CLEAN}/media-stream" />
-  </Connect>
-</Response>`;
-
 export async function handleCall(req, reply) {
   const to = req.body?.to;
   const token = req.headers.authorization || req.body.api_key;
@@ -49,7 +39,13 @@ export async function handleCall(req, reply) {
     const call = await client.calls.create({
       from: PHONE_NUMBER_FROM,
       to,
-      twiml: outboundTwiML('https://bridge.youzend.com/webhook/recording'),
+      record: 'record-from-answer-dual',
+      recordingStatusCallback: 'https://bridge.youzend.com/webhook/recording',
+      twiml: `<Response>
+        <Connect>
+          <Stream url="wss://${DOMAIN_CLEAN}/media-stream" />
+        </Connect>
+      </Response>`
     });
     return { message: 'Call initiated', sid: call.sid };
   } catch (err) {
