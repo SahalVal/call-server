@@ -18,15 +18,18 @@ const {
 
 const INTRO_TEXT = `Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.`;
 
-const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+$|\n/g, '');
+const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 6060;
+
 const SYSTEM_MESSAGE = `
 Tu es un assistant vocal professionnel, féminin, prénommée Emilie. Tu appelles un professionnel pour lui présenter le label Expert PRO, lancé par Le Guichet Pro : le guichet unique des entreprises, déjà utilisé par plus de 100 000 professionnels en France.
+
 Le Guichet Pro aide les entreprises à se développer via la génération de leads, l’accompagnement, et des services comme la conciergerie ou les achats pros. Le label Expert PRO référence uniquement des professionnels, et les met en avant auprès d’autres professionnels de leur secteur. Il permet d’être reconnu comme l’expert référent dans sa zone, d’attirer plus de clients professionnels qualifiés et de gagner en crédibilité.
+
 L’objectif de ton appel est d’ouvrir la discussion, puis de proposer d’envoyer un lien par WhatsApp ou email pour que le prospect puisse vérifier en quelques secondes s'il reste des places pour rejoindre le label. Tu ne vends rien, tu proposes un premier pas.
 
-**Important :** Commence toujours chaque appel par la phrase suivante, mot pour mot, sans jamais rien ajouter, ni changer, ni reformuler, ni omettre. Attends d’avoir fini la phrase avant d’écouter l’autre personne.
+Important : Commence toujours chaque appel par la phrase suivante, mot pour mot, sans jamais rien ajouter, ni changer, ni omettre. Attends d’avoir fini la phrase avant d’écouter l’autre personne.
 Lis exactement : "${INTRO_TEXT}"
 
 Adopte un ton naturel, chaleureux, enthousiaste, positif et professionnel. Parle rapidement mais articule, marque des pauses naturelles, ta voix doit être fluide et naturelle pas robotique du tout. Après la phrase d’intro, attends la réponse de ton interlocuteur avant de poursuivre.`;
@@ -79,10 +82,10 @@ fastify.register(async function (fastify) {
     );
 
     let streamSid = null;
-    let openAiReady = false;
-    let inputBuffer = [];
 
-    const flushIntroOnceReady = () => {
+    openAiWs.on('open', () => {
+      console.log('✅ OpenAI connected');
+
       openAiWs.send(JSON.stringify({
         type: 'session.update',
         session: {
@@ -95,28 +98,7 @@ fastify.register(async function (fastify) {
         },
       }));
 
-      openAiWs.send(JSON.stringify({
-        type: 'conversation.item.create',
-        item: {
-          type: 'message',
-          role: 'assistant',
-          content: [{
-            type: 'input_text',
-            text: INTRO_TEXT,
-          }],
-        },
-      }));
-
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
-
-      inputBuffer.forEach((buf) => openAiWs.send(JSON.stringify(buf)));
-      inputBuffer = [];
-    };
-
-    openAiWs.on('open', () => {
-      console.log('✅ OpenAI connected');
-      openAiReady = true;
-      setTimeout(flushIntroOnceReady, 100);
     });
 
     openAiWs.on('message', (data) => {
@@ -140,14 +122,11 @@ fastify.register(async function (fastify) {
         if (data.event === 'start') {
           streamSid = data.start.streamSid;
         } else if (data.event === 'media' && data.media?.payload) {
-          const payload = {
-            type: 'input_audio_buffer.append',
-            audio: data.media.payload,
-          };
-          if (openAiReady && openAiWs.readyState === WebSocket.OPEN) {
-            openAiWs.send(JSON.stringify(payload));
-          } else {
-            inputBuffer.push(payload);
+          if (openAiWs.readyState === WebSocket.OPEN) {
+            openAiWs.send(JSON.stringify({
+              type: 'input_audio_buffer.append',
+              audio: data.media.payload,
+            }));
           }
         }
       } catch (err) {
