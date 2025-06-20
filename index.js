@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import fastifyFormBody from '@fastify/formbody';
 import fastifyWs from '@fastify/websocket';
 import twilio from 'twilio';
-import fetch from 'node-fetch'; // Node 18+ ou supérieur (si tu as node 18, c'est intégré, sinon npm i node-fetch)
+import fetch from 'node-fetch'; // ou rien si tu es en Node 18+
 
 dotenv.config();
 
@@ -38,10 +38,11 @@ Lis exactement : "${INTRO_TEXT}"
 
 Adopte un ton naturel, chaleureux, enthousiaste, positif et professionnel. Parle rapidement mais articule clairement, marque des pauses naturelles (par exemple, une courte pause après la première question), évite tout ton robotique, souris dans la voix. Après la phrase d’intro, attends la réponse de ton interlocuteur avant de poursuivre.
 
-Si la personne souhaite raccrocher, ou que la conversation est terminée, indique-le en disant le mot "raccrocher" dans ta réponse.
-Si la personne souhaite recevoir des infos par email ou WhatsApp, dis dans ta réponse "envoyer un email" ou "envoyer un WhatsApp".
-Ne jamais improviser sur la phrase d’intro.
-`;
+Quand tu dois envoyer un message WhatsApp, prononce EXCLUSIVEMENT la phrase : "Je vous envoie le message WhatsApp".
+Quand tu dois envoyer un email, prononce EXCLUSIVEMENT la phrase : "Je vous envoie un email".
+Quand tu dois terminer la conversation, prononce EXCLUSIVEMENT la phrase : "Au revoir".
+Ne prononce ces phrases que lorsque l’action doit réellement être réalisée. Ne les emploie pas pour informer ou demander une confirmation. Ces phrases sont réservées à l’action et ne doivent pas être utilisées dans d’autres contextes.
+Après avoir dit "Au revoir", arrête de parler, l’appel va se terminer.`;
 
 // TwiML pour Twilio (outbound)
 const outboundTwiML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -108,7 +109,8 @@ fastify.register(async function (fastify) {
     );
 
     let streamSid = null;
-    let introDone = false; // Pour ne pas relancer deux fois
+    let openAiReady = false;
+    let inputBuffer = [];
 
     const sendInitialSessionUpdate = () => {
       openAiWs.send(JSON.stringify({
@@ -136,12 +138,15 @@ fastify.register(async function (fastify) {
         },
       }));
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
-      introDone = true;
     };
 
     openAiWs.on('open', () => {
       console.log('✅ OpenAI connected');
-      setTimeout(sendInitialSessionUpdate, 150); // micro délai pour la stabilité
+      setTimeout(sendInitialSessionUpdate, 150);
+      openAiReady = true;
+      // Flush du buffer de tout ce qui a été reçu de Twilio avant l'ouverture
+      inputBuffer.forEach(buf => openAiWs.send(JSON.stringify(buf)));
+      inputBuffer = [];
     });
 
     openAiWs.on('message', (data) => {
@@ -150,17 +155,18 @@ fastify.register(async function (fastify) {
 
         // Gestion des webhooks automatiques si l'IA "dit" un mot clé
         if (msg.type === 'response.content.delta' && msg.delta && typeof msg.delta.text === 'string') {
-          const lowerText = msg.delta.text.toLowerCase();
-          if (lowerText.includes('raccrocher')) {
+          const cleanText = msg.delta.text.trim();
+          if (cleanText === "Au revoir") {
             postToWebhook(WEBHOOK_N8N_HANGUP, 'raccrocher');
           }
-          if (lowerText.includes('envoyer un email')) {
+          if (cleanText === "Je vous envoie un email") {
             postToWebhook(WEBHOOK_N8N_SEND, 'envoyer un email');
           }
-          if (lowerText.includes('envoyer un whatsapp')) {
+          if (cleanText === "Je vous envoie le message WhatsApp") {
             postToWebhook(WEBHOOK_N8N_SEND, 'envoyer un WhatsApp');
           }
         }
+
 
         // Envoi audio à Twilio
         if (msg.type === 'response.audio.delta' && msg.delta) {
@@ -182,10 +188,15 @@ fastify.register(async function (fastify) {
         if (data.event === 'start') {
           streamSid = data.start.streamSid;
         } else if (data.event === 'media' && data.media?.payload) {
-          openAiWs.send(JSON.stringify({
+          const payload = {
             type: 'input_audio_buffer.append',
             audio: data.media.payload,
-          }));
+          };
+          if (openAiReady && openAiWs.readyState === WebSocket.OPEN) {
+            openAiWs.send(JSON.stringify(payload));
+          } else {
+            inputBuffer.push(payload);
+          }
         }
       } catch (err) {
         console.error('Error Twilio -> OpenAI:', err);
