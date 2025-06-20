@@ -18,7 +18,7 @@ const {
 
 const INTRO_TEXT = `Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.`;
 
-const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
+const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+$|\/$/, '');
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 6060;
 
@@ -90,12 +90,12 @@ fastify.register(async function (fastify) {
         type: 'session.update',
         session: {
           turn_detection: { type: 'server_vad' },
-          interruptibility: { assistant: true },
-          input_audio_format: 'mulaw',
-          output_audio_format: 'mulaw',
+          input_audio_format: 'g711_ulaw',
+          output_audio_format: 'g711_ulaw',
           voice: VOICE,
           instructions: SYSTEM_MESSAGE,
-          modalities: ['audio'],
+          modalities: ['audio', 'text'],
+          interruptibility: { assistant: true },
         },
       }));
 
