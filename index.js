@@ -21,6 +21,7 @@ const INTRO_TEXT = `Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous ave
 const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 6060;
+
 const SYSTEM_MESSAGE = `
 Tu es un assistant vocal professionnel, féminin, prénommée Emilie. Tu appelles un professionnel pour lui présenter le label Expert PRO, lancé par Le Guichet Pro : le guichet unique des entreprises, déjà utilisé par plus de 100 000 professionnels en France.
 
@@ -51,9 +52,24 @@ fastify.post('/call', async (req, reply) => {
   if (!to) return reply.status(400).send({ error: 'Missing "to"' });
   if (API_KEY && token !== `Bearer ${API_KEY}` && token !== API_KEY)
     return reply.status(401).send({ error: 'Unauthorized' });
+
   try {
-    const call = await client.calls.create({ from: PHONE_NUMBER_FROM, to, twiml: outboundTwiML });
-    return { message: 'Call initiated', sid: call.sid };
+    const call = await client.calls.create({
+      from: PHONE_NUMBER_FROM,
+      to,
+      twiml: outboundTwiML,
+      record: true,
+    });
+
+    // Récupérer l'enregistrement (sera dispo plus tard)
+    const recordings = await client.recordings.list({ callSid: call.sid, limit: 1 });
+    const recordingSid = recordings[0]?.sid || null;
+
+    return {
+      message: 'Call initiated',
+      sid: call.sid,
+      recording_sid: recordingSid, // Peut être null au début
+    };
   } catch (err) {
     console.error('Call error:', err);
     return reply.status(500).send({ error: 'Call failed', details: err.message });
@@ -77,7 +93,6 @@ fastify.register(async function (fastify) {
     let markQueue = [];
     let responseStartTimestampTwilio = null;
     const audioQueue = [];
-    let openAiReady = false;
 
     const flushAudioQueue = () => {
       while (audioQueue.length > 0 && openAiWs.readyState === WebSocket.OPEN) {
@@ -107,7 +122,6 @@ fastify.register(async function (fastify) {
 
     openAiWs.on('open', () => {
       console.log('✅ OpenAI connected');
-      openAiReady = true;
       openAiWs.send(JSON.stringify({
         type: 'session.update',
         session: {
