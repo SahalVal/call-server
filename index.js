@@ -13,12 +13,12 @@ const {
   PHONE_NUMBER_FROM,
   DOMAIN: rawDomain,
   OPENAI_API_KEY,
-  API_KEY, // facultatif pour sécuriser n8n
+  API_KEY,
 } = process.env;
 
 const INTRO_TEXT = `Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.`;
 
-const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
+const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+$|\n/g, '');
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 6060;
 const SYSTEM_MESSAGE = `
@@ -29,8 +29,7 @@ L’objectif de ton appel est d’ouvrir la discussion, puis de proposer d’env
 **Important :** Commence toujours chaque appel par la phrase suivante, mot pour mot, sans jamais rien ajouter, ni changer, ni reformuler, ni omettre. Attends d’avoir fini la phrase avant d’écouter l’autre personne.
 Lis exactement : "${INTRO_TEXT}"
 
-Adopte un ton naturel, chaleureux, enthousiaste, positif et professionnel. Parle rapidement mais articule, marque des pauses naturelles, ta voix doit être fluide et naturelle pas robotique du tout. Après la phrase d’intro, attends la réponse de ton interlocuteur avant de poursuivre.
-`;
+Adopte un ton naturel, chaleureux, enthousiaste, positif et professionnel. Parle rapidement mais articule, marque des pauses naturelles, ta voix doit être fluide et naturelle pas robotique du tout. Après la phrase d’intro, attends la réponse de ton interlocuteur avant de poursuivre.`;
 
 const outboundTwiML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -80,8 +79,10 @@ fastify.register(async function (fastify) {
     );
 
     let streamSid = null;
+    let openAiReady = false;
+    let inputBuffer = [];
 
-    const sendInitialSessionUpdate = () => {
+    const flushIntroOnceReady = () => {
       openAiWs.send(JSON.stringify({
         type: 'session.update',
         session: {
@@ -107,11 +108,15 @@ fastify.register(async function (fastify) {
       }));
 
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
+
+      inputBuffer.forEach((buf) => openAiWs.send(JSON.stringify(buf)));
+      inputBuffer = [];
     };
 
     openAiWs.on('open', () => {
       console.log('✅ OpenAI connected');
-      setTimeout(sendInitialSessionUpdate, 100);
+      openAiReady = true;
+      setTimeout(flushIntroOnceReady, 100);
     });
 
     openAiWs.on('message', (data) => {
@@ -135,10 +140,15 @@ fastify.register(async function (fastify) {
         if (data.event === 'start') {
           streamSid = data.start.streamSid;
         } else if (data.event === 'media' && data.media?.payload) {
-          openAiWs.send(JSON.stringify({
+          const payload = {
             type: 'input_audio_buffer.append',
             audio: data.media.payload,
-          }));
+          };
+          if (openAiReady && openAiWs.readyState === WebSocket.OPEN) {
+            openAiWs.send(JSON.stringify(payload));
+          } else {
+            inputBuffer.push(payload);
+          }
         }
       } catch (err) {
         console.error('Error Twilio -> OpenAI:', err);
