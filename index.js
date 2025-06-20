@@ -18,10 +18,9 @@ const {
 
 const INTRO_TEXT = `Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.`;
 
-const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+$|\/$/, '');
+const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 6060;
-
 const SYSTEM_MESSAGE = `
 Tu es un assistant vocal professionnel, féminin, prénommée Emilie. Tu appelles un professionnel pour lui présenter le label Expert PRO, lancé par Le Guichet Pro : le guichet unique des entreprises, déjà utilisé par plus de 100 000 professionnels en France.
 
@@ -49,17 +48,11 @@ fastify.register(fastifyWs);
 fastify.post('/call', async (req, reply) => {
   const to = req.body?.to;
   const token = req.headers.authorization || req.body.api_key;
-
   if (!to) return reply.status(400).send({ error: 'Missing "to"' });
   if (API_KEY && token !== `Bearer ${API_KEY}` && token !== API_KEY)
     return reply.status(401).send({ error: 'Unauthorized' });
-
   try {
-    const call = await client.calls.create({
-      from: PHONE_NUMBER_FROM,
-      to,
-      twiml: outboundTwiML,
-    });
+    const call = await client.calls.create({ from: PHONE_NUMBER_FROM, to, twiml: outboundTwiML });
     return { message: 'Call initiated', sid: call.sid };
   } catch (err) {
     console.error('Call error:', err);
@@ -70,22 +63,37 @@ fastify.post('/call', async (req, reply) => {
 fastify.register(async function (fastify) {
   fastify.get('/media-stream', { websocket: true }, (connection) => {
     console.log('✅ Twilio stream connected');
-
-    const openAiWs = new WebSocket(
-      'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'OpenAI-Beta': 'realtime=v1',
-        },
-      }
-    );
+    const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'OpenAI-Beta': 'realtime=v1',
+      },
+    });
 
     let streamSid = null;
+    let latestMediaTimestamp = 0;
+    let lastAssistantItem = null;
+    let markQueue = [];
+    let responseStartTimestampTwilio = null;
+
+    const handleSpeechStartedEvent = () => {
+      if (markQueue.length > 0 && responseStartTimestampTwilio != null && lastAssistantItem) {
+        const elapsedTime = latestMediaTimestamp - responseStartTimestampTwilio;
+        openAiWs.send(JSON.stringify({
+          type: 'conversation.item.truncate',
+          item_id: lastAssistantItem,
+          content_index: 0,
+          audio_end_ms: elapsedTime,
+        }));
+        connection.send(JSON.stringify({ event: 'clear', streamSid }));
+        markQueue = [];
+        lastAssistantItem = null;
+        responseStartTimestampTwilio = null;
+      }
+    };
 
     openAiWs.on('open', () => {
       console.log('✅ OpenAI connected');
-
       openAiWs.send(JSON.stringify({
         type: 'session.update',
         session: {
@@ -95,10 +103,8 @@ fastify.register(async function (fastify) {
           voice: VOICE,
           instructions: SYSTEM_MESSAGE,
           modalities: ['audio', 'text'],
-          interruptibility: { assistant: true },
         },
       }));
-
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
     });
 
@@ -106,11 +112,16 @@ fastify.register(async function (fastify) {
       try {
         const msg = JSON.parse(data);
         if (msg.type === 'response.audio.delta' && msg.delta) {
-          connection.send(JSON.stringify({
-            event: 'media',
-            streamSid,
-            media: { payload: msg.delta },
-          }));
+          connection.send(JSON.stringify({ event: 'media', streamSid, media: { payload: msg.delta } }));
+          if (!responseStartTimestampTwilio) {
+            responseStartTimestampTwilio = latestMediaTimestamp;
+          }
+          if (msg.item_id) lastAssistantItem = msg.item_id;
+          markQueue.push('responsePart');
+        } else if (msg.type === 'input_audio_buffer.speech_started') {
+          handleSpeechStartedEvent();
+        } else if (msg.type === 'mark') {
+          markQueue.shift();
         }
       } catch (err) {
         console.error('Error OpenAI -> Twilio:', err);
@@ -122,13 +133,14 @@ fastify.register(async function (fastify) {
         const data = JSON.parse(msg);
         if (data.event === 'start') {
           streamSid = data.start.streamSid;
+          responseStartTimestampTwilio = null;
+          latestMediaTimestamp = 0;
         } else if (data.event === 'media' && data.media?.payload) {
-          if (openAiWs.readyState === WebSocket.OPEN) {
-            openAiWs.send(JSON.stringify({
-              type: 'input_audio_buffer.append',
-              audio: data.media.payload,
-            }));
-          }
+          latestMediaTimestamp = data.media.timestamp;
+          openAiWs.send(JSON.stringify({
+            type: 'input_audio_buffer.append',
+            audio: data.media.payload,
+          }));
         }
       } catch (err) {
         console.error('Error Twilio -> OpenAI:', err);
