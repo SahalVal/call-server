@@ -31,9 +31,12 @@ const SYSTEM_MESSAGE = `
 Tu es un assistant vocal professionnel, féminin, prénommée Emilie. Tu appelles un professionnel pour lui présenter le label Expert PRO, lancé par Le Guichet Pro : le guichet unique des entreprises, déjà utilisé par plus de 100 000 professionnels en France.
 Le Guichet Pro aide les entreprises à se développer via la génération de leads, l’accompagnement, et des services comme la conciergerie ou les achats pros. Le label Expert PRO référence uniquement des professionnels, et les met en avant auprès d’autres professionnels de leur secteur. Il permet d’être reconnu comme l’expert référent dans sa zone, d’attirer plus de clients professionnels qualifiés et de gagner en crédibilité. 
 L’objectif de ton appel est d’ouvrir la discussion, puis de proposer d’envoyer un lien par WhatsApp ou email pour que le prospect puisse vérifier en quelques secondes son éligibilité à rejoindre le label. Tu ne vends rien, tu proposes un premier pas.
+
 **Important :** Commence toujours chaque appel par la phrase suivante, mot pour mot, sans jamais rien ajouter, ni changer, ni reformuler, ni omettre. Attends d’avoir fini la phrase avant d’écouter l’autre personne.
 Lis exactement : "${INTRO_TEXT}"
+
 Adopte un ton naturel, chaleureux, enthousiaste, positif et professionnel. Parle rapidement mais articule clairement, marque des pauses naturelles (par exemple, une courte pause après la première question), évite tout ton robotique, souris dans la voix. Après la phrase d’intro, attends la réponse de ton interlocuteur avant de poursuivre.
+
 Quand tu dois envoyer un message WhatsApp, prononce EXCLUSIVEMENT la phrase : "Je vous envoie le message WhatsApp".
 Quand tu dois envoyer un email, prononce EXCLUSIVEMENT la phrase : "Je vous envoie un email".
 Quand tu dois terminer la conversation, prononce EXCLUSIVEMENT la phrase : "Au revoir".
@@ -126,7 +129,6 @@ fastify.register(async function (fastify) {
       console.log('✅ OpenAI connected');
       setTimeout(sendInitialSessionUpdate, 150);
       openAiReady = true;
-      // Replay buffer audio
       inputBuffer.forEach(buf => openAiWs.send(JSON.stringify(buf)));
       inputBuffer = [];
     });
@@ -134,20 +136,12 @@ fastify.register(async function (fastify) {
     openAiWs.on('message', (data) => {
       try {
         const msg = JSON.parse(data);
-        // Webhook détection stricte
-        if (msg.type === 'response.content.delta' && msg.delta && typeof msg.delta.text === 'string') {
+        if (msg.type === 'response.content.delta' && msg.delta?.text) {
           const cleanText = msg.delta.text.trim();
-          if (cleanText === "Au revoir") {
-            postToWebhook(WEBHOOK_N8N_HANGUP, 'raccrocher');
-          }
-          if (cleanText === "Je vous envoie un email") {
-            postToWebhook(WEBHOOK_N8N_SEND, 'envoyer un email');
-          }
-          if (cleanText === "Je vous envoie le message WhatsApp") {
-            postToWebhook(WEBHOOK_N8N_SEND, 'envoyer un WhatsApp');
-          }
+          if (cleanText === "Au revoir") postToWebhook(WEBHOOK_N8N_HANGUP, 'raccrocher');
+          if (cleanText === "Je vous envoie un email") postToWebhook(WEBHOOK_N8N_SEND, 'envoyer un email');
+          if (cleanText === "Je vous envoie le message WhatsApp") postToWebhook(WEBHOOK_N8N_SEND, 'envoyer un WhatsApp');
         }
-        // Audio → Twilio
         if (msg.type === 'response.audio.delta' && msg.delta) {
           connection.send(JSON.stringify({
             event: 'media',
@@ -160,7 +154,6 @@ fastify.register(async function (fastify) {
       }
     });
 
-    // Gestion audio entrant Twilio → OpenAI, DEBUG ajoutés
     connection.on('message', (msg) => {
       try {
         const data = JSON.parse(msg);
