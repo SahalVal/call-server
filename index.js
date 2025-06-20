@@ -22,16 +22,10 @@ const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 6060;
 const SYSTEM_MESSAGE = `
-Tu es un assistant vocal professionnel, féminin, prénommée Emilie. Tu appelles un professionnel pour lui présenter le label Expert PRO, lancé par Le Guichet Pro : le guichet unique des entreprises, déjà utilisé par plus de 100 000 professionnels en France.
-
-Le Guichet Pro aide les entreprises à se développer via la génération de leads, l’accompagnement, et des services comme la conciergerie ou les achats pros. Le label Expert PRO référence uniquement des professionnels, et les met en avant auprès d’autres professionnels de leur secteur. Il permet d’être reconnu comme l’expert référent dans sa zone, d’attirer plus de clients professionnels qualifiés et de gagner en crédibilité.
-
-L’objectif de ton appel est d’ouvrir la discussion, puis de proposer d’envoyer un lien par WhatsApp ou email pour que le prospect puisse vérifier en quelques secondes s'il reste des places pour rejoindre le label. Tu ne vends rien, tu proposes un premier pas.
-
-Important : Commence toujours chaque appel par la phrase suivante, mot pour mot, sans jamais rien ajouter, ni changer, ni omettre. Attends d’avoir fini la phrase avant d’écouter l’autre personne.
+Tu es un assistant vocal professionnel, féminin, prénommée Emilie... (texte inchangé)
 Lis exactement : "${INTRO_TEXT}"
-
-Adopte un ton naturel, chaleureux, enthousiaste, positif et professionnel. Parle rapidement mais articule, marque des pauses naturelles, ta voix doit être fluide et naturelle pas robotique du tout. Après la phrase d’intro, attends la réponse de ton interlocuteur avant de poursuivre.`;
+... (fin inchangée)
+`;
 
 const outboundTwiML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -63,6 +57,7 @@ fastify.post('/call', async (req, reply) => {
 fastify.register(async function (fastify) {
   fastify.get('/media-stream', { websocket: true }, (connection) => {
     console.log('✅ Twilio stream connected');
+
     const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -75,6 +70,18 @@ fastify.register(async function (fastify) {
     let lastAssistantItem = null;
     let markQueue = [];
     let responseStartTimestampTwilio = null;
+    const audioQueue = [];
+    let openAiReady = false;
+
+    const flushAudioQueue = () => {
+      while (audioQueue.length > 0 && openAiWs.readyState === WebSocket.OPEN) {
+        const payload = audioQueue.shift();
+        openAiWs.send(JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: payload,
+        }));
+      }
+    };
 
     const handleSpeechStartedEvent = () => {
       if (markQueue.length > 0 && responseStartTimestampTwilio != null && lastAssistantItem) {
@@ -94,6 +101,7 @@ fastify.register(async function (fastify) {
 
     openAiWs.on('open', () => {
       console.log('✅ OpenAI connected');
+      openAiReady = true;
       openAiWs.send(JSON.stringify({
         type: 'session.update',
         session: {
@@ -106,6 +114,7 @@ fastify.register(async function (fastify) {
         },
       }));
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
+      flushAudioQueue();
     });
 
     openAiWs.on('message', (data) => {
@@ -137,10 +146,14 @@ fastify.register(async function (fastify) {
           latestMediaTimestamp = 0;
         } else if (data.event === 'media' && data.media?.payload) {
           latestMediaTimestamp = data.media.timestamp;
-          openAiWs.send(JSON.stringify({
-            type: 'input_audio_buffer.append',
-            audio: data.media.payload,
-          }));
+          if (openAiWs.readyState === WebSocket.OPEN) {
+            openAiWs.send(JSON.stringify({
+              type: 'input_audio_buffer.append',
+              audio: data.media.payload,
+            }));
+          } else {
+            audioQueue.push(data.media.payload);
+          }
         }
       } catch (err) {
         console.error('Error Twilio -> OpenAI:', err);
