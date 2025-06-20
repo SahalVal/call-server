@@ -213,6 +213,31 @@ fastify.register(async function (fastify) {
   });
 });
 
+connection.on('message', (msg) => {
+  try {
+    const data = JSON.parse(msg);
+    if (data.event === 'start') {
+      streamSid = data.start.streamSid;
+      console.log('Stream démarré, streamSid:', streamSid);
+    } else if (data.event === 'media' && data.media?.payload) {
+      console.log('Audio reçu de Twilio (len):', data.media.payload.length);
+      const payload = {
+        type: 'input_audio_buffer.append',
+        audio: data.media.payload,
+      };
+      if (openAiReady && openAiWs.readyState === WebSocket.OPEN) {
+        openAiWs.send(JSON.stringify(payload));
+      } else {
+        inputBuffer.push(payload);
+      }
+    } else {
+      console.log('Autre event Twilio:', data.event);
+    }
+  } catch (err) {
+    console.error('Error Twilio -> OpenAI:', err);
+  }
+});
+
 fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
   if (err) {
     console.error('❌ Server error:', err);
