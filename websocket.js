@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { SYSTEM_MESSAGE } from './twilio.js';
 const { OPENAI_API_KEY, VOICE = 'alloy' } = process.env;
 
 export function setupWebSocket(connection) {
@@ -35,7 +36,7 @@ export function setupWebSocket(connection) {
         content_index: 0,
         audio_end_ms: elapsedTime,
       }));
-      connection.socket.send(JSON.stringify({ event: 'clear', streamSid }));
+      connection.send(JSON.stringify({ event: 'clear', streamSid }));
       markQueue = [];
       lastAssistantItem = null;
       responseStartTimestampTwilio = null;
@@ -44,6 +45,7 @@ export function setupWebSocket(connection) {
 
   openAiWs.on('open', () => {
     console.log('✅ OpenAI connected');
+    openAiWs.send(JSON.stringify({ type: 'session.create' }));
     openAiWs.send(JSON.stringify({
       type: 'session.update',
       session: {
@@ -51,19 +53,19 @@ export function setupWebSocket(connection) {
         input_audio_format: 'g711_ulaw',
         output_audio_format: 'g711_ulaw',
         voice: VOICE,
-        instructions: require('./twilio.js').SYSTEM_MESSAGE,
+        instructions: SYSTEM_MESSAGE,
         modalities: ['audio', 'text'],
       },
     }));
     openAiWs.send(JSON.stringify({ type: 'response.create' }));
-    flushAudioQueue();
+    setTimeout(flushAudioQueue, 50);
   });
 
   openAiWs.on('message', (data) => {
     try {
       const msg = JSON.parse(data);
       if (msg.type === 'response.audio.delta' && msg.delta) {
-        connection.socket.send(JSON.stringify({ event: 'media', streamSid, media: { payload: msg.delta } }));
+        connection.send(JSON.stringify({ event: 'media', streamSid, media: { payload: msg.delta } }));
         if (!responseStartTimestampTwilio) responseStartTimestampTwilio = latestMediaTimestamp;
         if (msg.item_id) lastAssistantItem = msg.item_id;
         markQueue.push('responsePart');
@@ -77,7 +79,7 @@ export function setupWebSocket(connection) {
     }
   });
 
-  connection.socket.on('message', (msg) => {
+  connection.on('message', (msg) => {
     try {
       const data = JSON.parse(msg);
       if (data.event === 'start') {
@@ -100,7 +102,7 @@ export function setupWebSocket(connection) {
     }
   });
 
-  connection.socket.on('close', () => {
+  connection.on('close', () => {
     if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
     console.log('⛔️ Twilio stream closed');
   });
