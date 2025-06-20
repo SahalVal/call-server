@@ -17,16 +17,11 @@ const {
 } = process.env;
 
 const DOMAIN = rawDomain.replace(/(^\w+:|^)\/\//, '').replace(/\/+\$/, '');
-const VOICE = 'alloy';
+const VOICE = 'onyx';
 const PORT = process.env.PORT || 6060;
-const SYSTEM_MESSAGE = 'Tu es un assistant vocal professionnel. Tu appelles un professionnel pour lui présenter le label Expert PRO, lancé par Le Guichet Pro : le guichet unique des entreprises, déjà utilisé par plus de 100 000 professionnels en France. Le Guichet Pro aide les entreprises à se développer via la génération de leads, l’accompagnement, et des services comme la conciergerie ou les achats pros. Le label Expert PRO référence uniquement des professionnels, et les met en avant auprès d’autres professionnels de leur secteur. Il permet d’être reconnu comme l’expert référent dans sa zone, d’attirer plus de clients qualifiés et de gagner en crédibilité. L’objectif de ton appel est d’ouvrir la discussion, puis de proposer d’envoyer un lien par WhatsApp ou email pour que le prospect puisse vérifier immédiatement son éligibilité. Sois synthétique, pro et à l’écoute. Tu ne vends rien, tu proposes un premier pas.';
+const SYSTEM_MESSAGE = `Tu es un assistant vocal professionnel. Tu appelles un professionnel pour lui présenter le label Expert PRO, lancé par Le Guichet Pro : le guichet unique des entreprises, déjà utilisé par plus de 100 000 professionnels en France. Le Guichet Pro aide les entreprises à se développer via la génération de leads, l’accompagnement, et des services comme la conciergerie ou les achats pros. Le label Expert PRO référence uniquement des professionnels, et les met en avant auprès d’autres professionnels de leur secteur. Il permet d’être reconnu comme l’expert référent dans sa zone, d’attirer plus de clients qualifiés et de gagner en crédibilité. L’objectif de ton appel est d’ouvrir la discussion, puis de proposer d’envoyer un lien par WhatsApp ou email pour que le prospect puisse vérifier immédiatement son éligibilité. Sois synthétique, pro et à l’écoute. Tu ne vends rien, tu proposes un premier pas. Emploie un ton naturel, chaleureux et humain. Parle comme un conseiller pro, évite le langage robotique.`;
 
-const outboundTwiML = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Connect>
-    <Stream url="wss://${DOMAIN}/media-stream" />
-  </Connect>
-</Response>`;
+const outboundTwiML = `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n  <Connect>\n    <Stream url="wss://${DOMAIN}/media-stream" />\n  </Connect>\n</Response>`;
 
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const fastify = Fastify();
@@ -87,13 +82,14 @@ fastify.register(async function (fastify) {
         type: 'conversation.item.create',
         item: {
           type: 'message',
-          role: 'user',
+          role: 'assistant',
           content: [{
             type: 'input_text',
-            text: "Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.?",
+            text: `Bonjour, je suis Emilie de LeguichetPro. Est-ce que vous avez un instant ? Je souhaiterais vous parler du label Expert Pro, qui valorise les professionnels reconnus et vous donne accès à des services dédiés.`,
           }],
         },
       }));
+
 
       openAiWs.send(JSON.stringify({ type: 'response.create' }));
     };
