@@ -1,3 +1,6 @@
+import { handleCall, handleRecordingWebhook } from './twilio.js';
+import { setupWebSocket } from './websocket.js';
+
 export async function initRoutes(fastify) {
   fastify.route({
     method: 'POST',
