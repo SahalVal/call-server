@@ -1,4 +1,4 @@
-import { handleCall, handleRecordingWebhook } from './twilio.js';
+import { handleCall, handleRecordingWebhook, serveTwiML } from './twilio.js';
 import { setupWebSocket } from './websocket.js';
 
 export async function initRoutes(fastify) {
@@ -12,6 +12,12 @@ export async function initRoutes(fastify) {
     method: 'POST',
     url: '/webhook/recording',
     handler: handleRecordingWebhook,
+  });
+
+  fastify.route({
+    method: 'POST', // Twilio envoie un POST pour la TwiML
+    url: '/twiml',
+    handler: serveTwiML,
   });
 
   fastify.route({
