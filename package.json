@@ -1,5 +1,5 @@
 {
-  "name": "twilio-openai-voice-bot",
+  "name": "twilio-openai-realtime",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
@@ -7,11 +7,12 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "fastify": "^5.4.0",
-    "@fastify/formbody": "^8.0.2",
-    "@fastify/websocket": "^11.1.0",
+    "@fastify/formbody": "^8.5.1",
+    "@fastify/websocket": "^9.5.1",
     "dotenv": "^16.3.1",
-    "twilio": "^4.21.0",
-    "ws": "^8.15.1"
+    "fastify": "^4.27.2",
+    "twilio": "^4.20.0",
+    "ws": "^8.17.0",
+    "node-fetch": "^3.3.2"
   }
 }
