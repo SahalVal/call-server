@@ -90,16 +90,12 @@ fastify.register(async function (fastify) {
         type: 'session.update',
         session: {
           turn_detection: { type: 'server_vad' },
-          input_audio_format: 'g711_ulaw',
-          output_audio_format: 'g711_ulaw',
+          interruptibility: { assistant: true },
+          input_audio_format: 'mulaw',
+          output_audio_format: 'mulaw',
           voice: VOICE,
           instructions: SYSTEM_MESSAGE,
-          modalities: ['audio', 'text'],
-          interim_results: true,
-          interruptibility: {
-            assistant: true,
-            user: true,
-          },
+          modalities: ['audio'],
         },
       }));
 
